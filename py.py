@@ -41,6 +41,7 @@ def boolean_abstraction(formula):
     
     return rec(formula),abstractions,abst_indexes
 
+# Function to simplify CNF formulas represented as an array of sets
 def remove_supersets(sets):
     sets = sorted(sets, key=len)
     result = []
@@ -73,7 +74,7 @@ def to_cnf(formula):
             Or(Not(formula.arg(1)),formula.arg(2)),
         ))
     
-    # Apply distributive and commutative properties on OR
+    # Apply commutative and distributive properties on OR
     if formula.is_or():
         or_args=set()
         and_args=set()
@@ -90,6 +91,7 @@ def to_cnf(formula):
             else:
                 or_args.add(arg)
 
+        # a | !a == true
         for el in or_args:
             if Not(el) in or_args:
                 return TRUE()
@@ -101,12 +103,12 @@ def to_cnf(formula):
                 for j,arg2 in enumerate(arg.args()):
                     args3=set()
                     if arg2.is_literal():
-                        if Not(arg2) in d:
+                        if Not(arg2) in d: # a & !a == false
                             continue
                         args3.add(arg2)
                     else:
                         for arg3 in arg2.args():
-                            if Not(arg3) in d:
+                            if Not(arg3) in d: # a & !a == false
                                 args3=None
                                 break
                             args3.add(arg3)
@@ -132,6 +134,7 @@ def to_cnf(formula):
             else:
                 args.add(arg)
         
+        # a & !a == false
         for el in args:
             if Not(el) in args:
                 return FALSE()
