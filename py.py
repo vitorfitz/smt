@@ -1,52 +1,154 @@
 from pysmt.smtlib.parser import SmtLibParser
-from sympy.logic.boolalg import to_cnf
 import sys
-from pysmt.shortcuts import Not, UnsatCoreSolver
-import sympy
+from pysmt.shortcuts import Not, And, Or, Ite, Implies, Iff, TRUE, FALSE, UnsatCoreSolver, Symbol
+from pysmt.environment import get_env
+from pysmt.typing import BOOL
+from pysmt.operators import AND
 from pysat.solvers import Glucose3
 
-def boolean_abstraction(pysmt_formula):
+def boolean_abstraction(formula):
     """Abstracts the QF_LRA formula by replacing numerical comparison operations (>, >=, <, <=, =) with Boolean variables."""
     abstractions=[]
     abst_indexes={}
     next_index=1
 
     # Recursively traverse the formula
-    def rec(pysmt_formula):
+    def rec(formula):
         nonlocal next_index
 
         # Convert the Boolean operations to SymPy
-        if pysmt_formula.is_true():
-            return True
-        if pysmt_formula.is_false():
-            return False
-        if pysmt_formula.is_not():
-            return sympy.Not(rec(pysmt_formula.arg(0)))
-        if pysmt_formula.is_and():
-            return sympy.And(*[rec(arg) for arg in pysmt_formula.args()])
-        if pysmt_formula.is_or():
-            return sympy.Or(*[rec(arg) for arg in pysmt_formula.args()])
-        if pysmt_formula.is_ite():
-            return sympy.ITE(*[rec(arg) for arg in pysmt_formula.args()])
-        if pysmt_formula.is_implies():
-            return sympy.Implies(*[rec(arg) for arg in pysmt_formula.args()])
-        
-        # Abstract the comparison operations between reals
-        if not(
-            pysmt_formula.is_equals() or
-            pysmt_formula.is_lt() or
-            pysmt_formula.is_le()
-        ):
-            raise ValueError(f"Unsupported PySMT formula: {pysmt_formula}")
+        if formula.is_bool_constant():
+            return formula
+        if formula.is_bool_op():
+            return get_env().formula_manager.create_node(
+                formula.node_type(),
+                tuple(rec(arg) for arg in formula.args())
+            )
 
-        formula_str=str(pysmt_formula)
-        if formula_str not in abst_indexes:
-            abst_indexes[formula_str]=next_index
-            next_index+=1
-            abstractions.append(pysmt_formula)
-        return sympy.symbols(str(abst_indexes[formula_str]))
+        # Abstract the comparison operations between reals
+        if (
+            formula.is_equals() or
+            formula.is_lt() or
+            formula.is_le()
+        ):
+            if formula not in abst_indexes:
+                abst_indexes[formula]=next_index
+                next_index+=1
+                abstractions.append(formula)
+            return Symbol(str(abst_indexes[formula]), BOOL)
+        
+        raise ValueError("Unexpected literal or operator in subformula \""+str(formula)+"\"")
     
-    return rec(pysmt_formula),abstractions,abst_indexes
+    return rec(formula),abstractions,abst_indexes
+
+def remove_supersets(sets):
+    sets = sorted(sets, key=len)
+    result = []
+    
+    for i, s in enumerate(sets):
+        if not any(s >= other for other in result):
+            result.append(s)
+    
+    return result
+
+def to_cnf(formula):
+    # Base case
+    if formula.is_bool_constant() or formula.is_literal():
+        return formula
+    
+    # Convert everything to "and", "or" and "not"
+    if formula.is_implies():
+        return to_cnf(Or(Not(formula.arg(0)),formula.arg(1)))
+    
+    if formula.is_iff():
+        return to_cnf(And(
+            Or(Not(formula.arg(0)),formula.arg(1)),
+            Or(formula.arg(0),Not(formula.arg(1))),
+        ))
+    
+    if formula.is_ite():
+        return to_cnf(And(
+            Or(formula.arg(0),formula.arg(2)),
+            Or(Not(formula.arg(0)),formula.arg(1)),
+            Or(Not(formula.arg(1)),formula.arg(2)),
+        ))
+    
+    # Apply distributive and commutative properties on OR
+    if formula.is_or():
+        or_args=set()
+        and_args=set()
+        for i,arg in enumerate(formula.args()):
+            arg=to_cnf(arg)
+            if arg.is_and():
+                and_args.add(arg)
+            elif arg.is_true():
+                return TRUE()
+            elif arg.is_false():
+                continue
+            elif arg.is_or():
+                or_args.update(arg.args())
+            else:
+                or_args.add(arg)
+
+        for el in or_args:
+            if Not(el) in or_args:
+                return TRUE()
+
+        distributed=[or_args]
+        for i,arg in enumerate(and_args):
+            dist2=[]
+            for d in distributed:
+                for j,arg2 in enumerate(arg.args()):
+                    args3=set()
+                    if arg2.is_literal():
+                        if Not(arg2) in d:
+                            continue
+                        args3.add(arg2)
+                    else:
+                        for arg3 in arg2.args():
+                            if Not(arg3) in d:
+                                args3=None
+                                break
+                            args3.add(arg3)
+                    if args3!=None:
+                        d2=d.copy()
+                        d2.update(args3)
+                        dist2.append(d2)
+            distributed=remove_supersets(dist2)
+        
+        return And(Or(*d) for d in distributed)
+    
+    # Apply commutative property on AND
+    if formula.is_and():
+        args=set()
+        for i,arg in enumerate(formula.args()):
+            arg=to_cnf(arg)
+            if arg.is_and():
+                args.update(arg.args())
+            elif arg.is_true():
+                continue
+            elif arg.is_false():
+                return FALSE()
+            else:
+                args.add(arg)
+        
+        for el in args:
+            if Not(el) in args:
+                return FALSE()
+        
+        return And(a for a in args)
+
+    # Apply DeMorgan on NOT
+    if formula.is_not():
+        arg=formula.arg(0)
+        if arg.is_and():
+            return Or(*[to_cnf(Not(arg)) for arg in arg.args()])
+        elif arg.is_or():
+            return And(*[to_cnf(Not(arg)) for arg in arg.args()])
+        elif arg.is_true():
+            return FALSE()
+        elif arg.is_false():
+            return TRUE()
 
 # Parse the SMT-LIB file
 if len(sys.argv)<2:
@@ -60,15 +162,36 @@ formula = script.get_last_formula()
 
 # Convert the formula to CNF
 bool_formula,abstractions,abst_indexes=boolean_abstraction(formula)
-cnf_formula = to_cnf(bool_formula)
+cnf_formula=to_cnf(bool_formula)
+# cnf_formula=to_cnf(
+#     Or(
+#         And(Or(Symbol("a"),Symbol("b")),Symbol("c")),
+#         Or(Not(Symbol("b")), Symbol("a"))
+#     )
+# )
+if cnf_formula.is_false():
+    print("unsat")
+    exit(0)
 
 # Convert CNF formula into a list of clauses
+def get_clause_number(lit):
+    return int(str(lit).strip("'"))*(-1 if lit.is_not() else 1)
+
 clauses = []
-for clause in cnf_formula.args:
-    if clause.is_Atom:
-        clauses.append([int(str(clause))])
-    else:
-        clauses.append([int(str(lit)) for lit in clause.args])
+if not formula.is_true():
+    for clause in cnf_formula.args():
+        if clause.is_literal():
+            clauses.append([get_clause_number(clause)])
+        else:
+            clauses.append([get_clause_number(lit) for lit in clause.args()])
+
+# Add dummy clauses for variables that were simplified out
+unused_vars=set(i for i in range(1,len(abstractions)+1))
+for c in clauses:
+    for var in c:
+        unused_vars.remove(abs(var))
+for u in unused_vars:
+    clauses.append([-u,u])
 
 # Add clauses to SAT solver
 sat_solver = Glucose3()
@@ -98,7 +221,12 @@ while True:
                 unsat_core = s.get_unsat_core()
                 new_clause=[]
                 for expr in unsat_core:
-                    new_clause.append(-abst_indexes[str(expr)])
+                    if expr in abst_indexes:
+                        new_clause.append(-abst_indexes[expr])
+                    elif Not(expr) in abst_indexes:
+                        new_clause.append(abst_indexes[Not(expr)])
+                    else:
+                        raise ValueError("Unexpected clause \""+str(expr)+"\" in Unsat Core")
                 sat_solver.add_clause(new_clause)
                 pass
     else:

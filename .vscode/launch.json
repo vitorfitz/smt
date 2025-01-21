@@ -12,7 +12,7 @@
             "program": "py.py",
             "console": "integratedTerminal",
             "justMyCode": false,
-            "args": "inputs/easy_unsat.smt2"
+            "args": "inputs/hard_sat.smt2"
         }
     ]
 }
