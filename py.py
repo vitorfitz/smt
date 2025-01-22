@@ -177,6 +177,13 @@ formula = script.get_last_formula()
 # Convert the formula to CNF
 bool_formula, abstractions, abst_indexes, boolean_vars = boolean_abstraction(
     formula)
+
+num_added_vars = len(abstractions)
+bool_vars_dict = {}
+for var in boolean_vars:
+    num_added_vars += 1
+    bool_vars_dict[var] = num_added_vars
+
 cnf_formula = to_cnf(bool_formula)
 
 if cnf_formula.is_false():
@@ -186,6 +193,13 @@ if cnf_formula.is_false():
 # Convert CNF formula into a list of clauses
 def get_clause_number(lit):
     ret = str(lit).strip(" '!()")
+    
+    if not ret.isdigit():
+        lit2 = lit
+        if lit.is_not():
+            lit2 = lit.arg(0)
+        return bool_vars_dict[lit2]*(-1 if lit.is_not() else 1)
+    
     return int(ret)*(-1 if lit.is_not() else 1)
 
 clauses = []
@@ -195,14 +209,6 @@ if not formula.is_true():
             clauses.append([get_clause_number(clause)])
         else:
             clauses.append([get_clause_number(lit) for lit in clause.args()])
-
-    num_added_vars = len(abstractions)
-    for var in boolean_vars:
-        num_added_vars += 1
-        if var.is_not():
-            clauses.append(-num_added_vars)
-        else:
-            clauses.append(num_added_vars)
 
 # Add dummy clauses for variables that were simplified out
 unused_vars = set(i for i in range(1, len(abstractions)+1))
@@ -220,6 +226,13 @@ sat_solver = Glucose3()
 for c in clauses:
     sat_solver.add_clause(c)
 
+# with open("clauses", "w+") as clause_file:
+#     print(f"clauses:\t {clauses}", file=clause_file)
+# with open("abstractions", "w+") as abstraction_file:
+#     print(f"abstractions: {abstractions}", file=abstraction_file)
+# print(len(abstractions))
+# print(len(clauses))
+
 while True:
     # Get a solution of the abstracted SAT problem
     if sat_solver.solve():
@@ -228,10 +241,11 @@ while True:
         with UnsatCoreSolver(name="z3", logic="QF_LRA") as s:
             # Check if solution is valid for the full problem
             for var in model:
-                if var > 0:
-                    s.add_assertion(abstractions[var-1])
-                else:
-                    s.add_assertion(Not(abstractions[-var-1]))
+                if abs(var)-1 < len(abstractions):
+                    if var > 0:
+                        s.add_assertion(abstractions[var-1])
+                    else:
+                        s.add_assertion(Not(abstractions[-var-1]))
 
             if s.solve():
                 # Solution is valid and can be returned
