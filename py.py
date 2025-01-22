@@ -177,8 +177,15 @@ def to_cnf(formula):
             return FALSE()
         elif arg.is_false():
             return TRUE()
+        elif arg.is_iff():
+            return to_cnf(Or(
+                And(arg.arg(0), Not(arg.arg(1))),
+                And(Not(arg.arg(0)), arg.arg(1)),
+            ))
+        elif arg.is_literal():
+            return formula
 
-    return formula
+    raise Exception("Unmapped formula")
 
 
 # Parse the SMT-LIB file
