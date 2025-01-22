@@ -6,12 +6,11 @@ from pysmt.typing import BOOL
 from pysmt.operators import AND
 from pysat.solvers import Glucose3
 
-
 def boolean_abstraction(formula):
     """Abstracts the QF_LRA formula by replacing numerical comparison operations (>, >=, <, <=, =) with Boolean variables."""
     abstractions = []
     abst_indexes = {}
-    boolean_vars = []
+    boolean_vars = set()
     next_index = 1
 
     # Recursively traverse the formula
@@ -32,7 +31,23 @@ def boolean_abstraction(formula):
             formula.is_equals() or
             formula.is_lt() or
             formula.is_le()
-        ):
+        ):  
+            # Handle formulas with real operators nested inside ITEs, like:
+            # a > (b? 1: 2)
+            # Rewritten to: (b and a>1) or (not b and a>2)
+            def ite_substitution(pos,replacement):
+                return get_env().formula_manager.create_node(
+                    formula.node_type(),
+                    tuple(replacement if i==pos else arg for i, arg in enumerate(formula.args())),
+                )
+
+            for i, ite in enumerate(formula.args()):
+                if ite.is_ite():
+                    return Or(
+                        rec(And(ite.arg(0),ite_substitution(i,ite.arg(1)))),
+                        rec(And(Not(ite.arg(0)),ite_substitution(i,ite.arg(2)))),
+                    )
+            
             if formula not in abst_indexes:
                 abst_indexes[formula] = next_index
                 next_index += 1
@@ -40,7 +55,7 @@ def boolean_abstraction(formula):
             return Symbol(str(abst_indexes[formula]), BOOL)
 
         if formula.is_literal():
-            boolean_vars.append(formula)
+            boolean_vars.add(formula)
             return formula
 
         raise ValueError(
