@@ -2,22 +2,24 @@
 
 solver="z3" # cvc5 or z3
 
-problem="QF_LRA/check/bignum_lra1.smt2"
-eval $solver $problem
-eval "python3" "py.py" $problem
-echo "-----------------------------------------------"
+compare_with_solver() {
+    eval $solver $1
+    eval "python3" "py.py" $1
+    echo "-----------------------------------------------"
+}
 
-problem="QF_LRA/check/bignum_lra2.smt2"
-eval $solver $problem
-eval "python3" "py.py" $problem
-echo "-----------------------------------------------"
+problems=(
+    # "QF_LRA/check/bignum_lra1.smt2"
+    # "QF_LRA/check/bignum_lra2.smt2"
+    # "QF_LRA/clock_synchro/clocksynchro_2clocks.main_invar.base.smt2"
+    # "QF_LRA/sal/gasburner/gasburner-prop3-12.smt2"
+    # "QF_LRA/sal/gasburner/gasburner-prop3-5.smt2"
+    # "QF_LRA/DTP-Scheduling/constraints-cooking01.smt2"
+    # "QF_LRA/DTP-Scheduling/constraints-tms-2-3-light-10.smt2"
+    "QF_LRA/sc/sc-5.base.cvc.smt2"
+)
 
-problem="QF_LRA/clock_synchro/clocksynchro_2clocks.main_invar.base.smt2"
-eval $solver $problem
-eval "python3" "py.py" $problem
-echo "-----------------------------------------------"
-
-problem="QF_LRA/sal/gasburner/gasburner-prop3-12.smt2"
-eval $solver $problem
-eval "python3" "py.py" $problem
-echo "-----------------------------------------------"
+for p in "${problems[@]}"; do
+    echo "$p";
+    compare_with_solver "$p";
+done

@@ -1,10 +1,10 @@
 from pysmt.smtlib.parser import SmtLibParser
 import sys
-from pysmt.shortcuts import Not, And, Or, Ite, Implies, Iff, TRUE, FALSE, UnsatCoreSolver, Symbol
+from pysmt.shortcuts import Not, And, Or, TRUE, FALSE, UnsatCoreSolver, Symbol
 from pysmt.environment import get_env
 from pysmt.typing import BOOL
-from pysmt.operators import AND
 from pysat.solvers import Glucose3
+
 
 def boolean_abstraction(formula):
     """Abstracts the QF_LRA formula by replacing numerical comparison operations (>, >=, <, <=, =) with Boolean variables."""
@@ -31,23 +31,24 @@ def boolean_abstraction(formula):
             formula.is_equals() or
             formula.is_lt() or
             formula.is_le()
-        ):  
+        ):
             # Handle formulas with real operators nested inside ITEs, like:
             # a > (b? 1: 2)
             # Rewritten to: (b and a>1) or (not b and a>2)
-            def ite_substitution(pos,replacement):
+            def ite_substitution(pos, replacement):
                 return get_env().formula_manager.create_node(
                     formula.node_type(),
-                    tuple(replacement if i==pos else arg for i, arg in enumerate(formula.args())),
+                    tuple(replacement if i == pos else arg for i,
+                          arg in enumerate(formula.args())),
                 )
 
             for i, ite in enumerate(formula.args()):
                 if ite.is_ite():
                     return Or(
-                        rec(And(ite.arg(0),ite_substitution(i,ite.arg(1)))),
-                        rec(And(Not(ite.arg(0)),ite_substitution(i,ite.arg(2)))),
+                        rec(And(ite.arg(0), ite_substitution(i, ite.arg(1)))),
+                        rec(And(Not(ite.arg(0)), ite_substitution(i, ite.arg(2)))),
                     )
-            
+
             if formula not in abst_indexes:
                 abst_indexes[formula] = next_index
                 next_index += 1
@@ -63,10 +64,9 @@ def boolean_abstraction(formula):
 
     return rec(formula), abstractions, abst_indexes, boolean_vars
 
-# Function to simplify CNF formulas represented as an array of sets
-
 
 def remove_supersets(sets):
+    """Function to simplify CNF formulas represented as an array of sets"""
     sets = sorted(sets, key=len)
     result = []
 
@@ -178,6 +178,8 @@ def to_cnf(formula):
         elif arg.is_false():
             return TRUE()
 
+    return formula
+
 
 # Parse the SMT-LIB file
 if len(sys.argv) < 2:
@@ -205,17 +207,19 @@ if cnf_formula.is_false():
     print("unsat")
     exit(0)
 
-# Convert CNF formula into a list of clauses
+
 def get_clause_number(lit):
+    """Convert CNF formula into a list of clauses"""
     ret = str(lit).strip(" '!()")
-    
+
     if not ret.isdigit():
         lit2 = lit
         if lit.is_not():
             lit2 = lit.arg(0)
         return bool_vars_dict[lit2]*(-1 if lit.is_not() else 1)
-    
+
     return int(ret)*(-1 if lit.is_not() else 1)
+
 
 clauses = []
 if not formula.is_true():
