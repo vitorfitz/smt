@@ -20,7 +20,7 @@ def boolean_abstraction(formula):
         # Convert the Boolean operations to SymPy
         if formula.is_bool_constant():
             return formula
-        if formula.is_bool_op():
+        if formula.is_bool_op() or formula.is_ite():
             return get_env().formula_manager.create_node(
                 formula.node_type(),
                 tuple(rec(arg) for arg in formula.args())
@@ -170,21 +170,18 @@ def to_cnf(formula):
     if formula.is_not():
         arg = formula.arg(0)
         if arg.is_and():
-            return Or(*[to_cnf(Not(arg)) for arg in arg.args()])
+            return to_cnf(Or(*[(Not(arg)) for arg in arg.args()]))
         elif arg.is_or():
             return And(*[to_cnf(Not(arg)) for arg in arg.args()])
         elif arg.is_true():
             return FALSE()
         elif arg.is_false():
             return TRUE()
-        elif arg.is_iff():
-            return to_cnf(Or(
-                And(arg.arg(0), Not(arg.arg(1))),
-                And(Not(arg.arg(0)), arg.arg(1)),
-            ))
         elif arg.is_literal():
             return formula
-
+        else:
+            return to_cnf(Not(to_cnf(arg)))
+        
     raise Exception("Unmapped formula")
 
 
