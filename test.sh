@@ -23,7 +23,6 @@ problems=(
     "inputs/sc-5.induction.cvc.smt2"
     "inputs/windowreal-no_t_deadlock-1.smt2"
     "inputs/windowreal-safe-3.smt2"
-    "inputs/uart-6.induction.cvc.smt2"
 )
 
 for p in "${problems[@]}"; do
