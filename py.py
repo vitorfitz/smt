@@ -4,7 +4,10 @@ from pysmt.shortcuts import Not, And, Or, TRUE, FALSE, UnsatCoreSolver, Symbol
 from pysmt.environment import get_env
 from pysmt.typing import BOOL
 from pysat.solvers import Glucose3
+from collections import Counter
 
+aux_prefix="."  # Prefix for auxiliary variables
+# Invalid variable name to avoid conflict with input variables
 
 def boolean_abstraction(formula):
     """Abstracts the QF_LRA formula by replacing numerical comparison operations (>, >=, <, <=, =) with Boolean variables."""
@@ -53,137 +56,76 @@ def boolean_abstraction(formula):
                 abst_indexes[formula] = next_index
                 next_index += 1
                 abstractions.append(formula)
-            return Symbol(str(abst_indexes[formula]), BOOL)
+            return Symbol(aux_prefix+str(abst_indexes[formula]), BOOL)
 
         if formula.is_literal():
             boolean_vars.add(formula)
             return formula
 
         raise ValueError(
-            "Unexpected literal or operator in subformula \""+str(formula)+"\"")
+            "Unexpected literal or operator in formula \""+str(formula)+"\"")
 
     return rec(formula), abstractions, abst_indexes, boolean_vars
 
-
-def remove_supersets(sets):
-    """Function to simplify CNF formulas represented as an array of sets"""
-    sets = sorted(sets, key=len)
-    result = []
-
-    for i, s in enumerate(sets):
-        if not any(s >= other for other in result):
-            result.append(s)
-
-    return result
-
-
-def to_cnf(formula):
-    # Base case
-    if formula.is_bool_constant() or formula.is_literal():
-        return formula
-
-    # Convert everything to "and", "or" and "not"
-    if formula.is_implies():
-        return to_cnf(Or(Not(formula.arg(0)), formula.arg(1)))
-
-    if formula.is_iff():
-        return to_cnf(And(
-            Or(Not(formula.arg(0)), formula.arg(1)),
-            Or(formula.arg(0), Not(formula.arg(1))),
-        ))
-
-    if formula.is_ite():
-        return to_cnf(And(
-            Or(formula.arg(0), formula.arg(2)),
-            Or(Not(formula.arg(0)), formula.arg(1)),
-            Or(Not(formula.arg(1)), formula.arg(2)),
-        ))
-
-    # Apply commutative and distributive properties on OR
-    if formula.is_or():
-        or_args = set()
-        and_args = set()
-        for i, arg in enumerate(formula.args()):
-            arg = to_cnf(arg)
-            if arg.is_and():
-                and_args.add(arg)
-            elif arg.is_true():
-                return TRUE()
-            elif arg.is_false():
-                continue
-            elif arg.is_or():
-                or_args.update(arg.args())
-            else:
-                or_args.add(arg)
-
-        # a | !a == true
-        for el in or_args:
-            if Not(el) in or_args:
-                return TRUE()
-
-        distributed = [or_args]
-        for i, arg in enumerate(and_args):
-            dist2 = []
-            for d in distributed:
-                for j, arg2 in enumerate(arg.args()):
-                    args3 = set()
-                    if arg2.is_literal():
-                        if Not(arg2) in d:  # a & !a == false
-                            continue
-                        args3.add(arg2)
-                    else:
-                        for arg3 in arg2.args():
-                            if Not(arg3) in d:  # a & !a == false
-                                args3 = None
-                                break
-                            args3.add(arg3)
-                    if args3 != None:
-                        d2 = d.copy()
-                        d2.update(args3)
-                        dist2.append(d2)
-            distributed = remove_supersets(dist2)
-
-        return And(Or(*d) for d in distributed)
-
-    # Apply commutative property on AND
-    if formula.is_and():
-        args = set()
-        for i, arg in enumerate(formula.args()):
-            arg = to_cnf(arg)
-            if arg.is_and():
-                args.update(arg.args())
-            elif arg.is_true():
-                continue
-            elif arg.is_false():
-                return FALSE()
-            else:
-                args.add(arg)
-
-        # a & !a == false
-        for el in args:
-            if Not(el) in args:
-                return FALSE()
-
-        return And(a for a in args)
-
-    # Apply DeMorgan on NOT
-    if formula.is_not():
-        arg = formula.arg(0)
-        if arg.is_and():
-            return to_cnf(Or(*[(Not(arg)) for arg in arg.args()]))
-        elif arg.is_or():
-            return And(*[to_cnf(Not(arg)) for arg in arg.args()])
-        elif arg.is_true():
-            return FALSE()
-        elif arg.is_false():
-            return TRUE()
-        elif arg.is_literal():
+def to_cnf(formula, num_aux_vars=0):
+    """
+    Convert a Boolean formula to CNF using Tseitin transformation.
+    """
+    def get_aux_var():
+        nonlocal num_aux_vars
+        num_aux_vars+=1
+        s=Symbol(aux_prefix+str(num_aux_vars))
+        return s
+    
+    clauses=[]
+    def rec(formula):
+        if formula.is_bool_constant() or formula.is_literal():
             return formula
-        else:
-            return to_cnf(Not(to_cnf(arg)))
         
-    raise Exception("Unmapped formula")
+        not_flag=False
+        if formula.is_not():
+            not_flag=True
+            formula=formula.arg(0)
 
+        # Convert everything to "and", "or" and "not"
+        if formula.is_implies():
+            formula=Or(Not(formula.arg(0)), formula.arg(1))
+
+        elif formula.is_iff():
+            formula=And(
+                Or(Not(formula.arg(0)), formula.arg(1)),
+                Or(formula.arg(0), Not(formula.arg(1))),
+            )
+
+        elif formula.is_ite():
+            formula=Or(
+                And(formula.arg(0), formula.arg(1)),
+                And(Not(formula.arg(0)), formula.arg(2)),
+            )
+        
+        # Apply Tseitin transformations
+        if formula.is_and() or formula.is_or():
+            aux_var = get_aux_var()
+            if not_flag:
+                aux_var=Not(aux_var)
+            sub_aux_vars = [rec(arg) for arg in formula.args()]
+            if formula.is_and():
+                for sub_aux in sub_aux_vars:
+                    clauses.append(Or(Not(aux_var), sub_aux))
+                clauses.append(Or(aux_var, *[Not(sub) for sub in sub_aux_vars]))
+            else: # formula.is_or():
+                for sub_aux in sub_aux_vars:
+                    clauses.append(Or(aux_var, Not(sub_aux)))
+                clauses.append(Or(Not(aux_var), *sub_aux_vars))
+            return aux_var
+
+        raise Exception(f"Unsupported formula type: {formula}")
+
+    top_aux = rec(formula)
+    clauses.append(top_aux)  # Ensure the top-level formula holds
+
+    # Combine all clauses into a CNF
+    return And(*clauses)
 
 # Parse the SMT-LIB file
 if len(sys.argv) < 2:
@@ -199,39 +141,47 @@ formula = script.get_last_formula()
 bool_formula, abstractions, abst_indexes, boolean_vars = boolean_abstraction(
     formula)
 
-num_added_vars = len(abstractions)
+num_aux_vars = len(abstractions)
 bool_vars_dict = {}
 for var in boolean_vars:
-    num_added_vars += 1
-    bool_vars_dict[var] = num_added_vars
+    num_aux_vars += 1
+    bool_vars_dict[var] = num_aux_vars
 
-cnf_formula = to_cnf(bool_formula)
-
+# cnf_formula=to_cnf(Or(
+#     And(Symbol("a"),Not(Symbol("b"))),
+#     Not(And(Symbol("c"),Symbol("d"))),
+# ))
+cnf_formula = to_cnf(bool_formula,num_aux_vars)
 if cnf_formula.is_false():
     print("unsat")
     exit(0)
 
-
-def get_clause_number(lit):
-    """Convert CNF formula into a list of clauses"""
-    ret = str(lit).strip(" '!()")
-
-    if not ret.isdigit():
-        lit2 = lit
-        if lit.is_not():
-            lit2 = lit.arg(0)
-        return bool_vars_dict[lit2]*(-1 if lit.is_not() else 1)
-
-    return int(ret)*(-1 if lit.is_not() else 1)
-
-
+# Convert CNF formula into a list of clauses
 clauses = []
 if not formula.is_true():
     for clause in cnf_formula.args():
         if clause.is_literal():
-            clauses.append([get_clause_number(clause)])
+            vars=[clause]
         else:
-            clauses.append([get_clause_number(lit) for lit in clause.args()])
+            vars=[lit for lit in clause.args()]
+        
+        nums=[]
+        for var in vars:
+            # Get variable name
+            name = str(var).strip(" '!()")
+            
+            if name.startswith(aux_prefix):
+                # Is an auxiliary variable
+                nums.append(int(name[len(aux_prefix):])*(-1 if var.is_not() else 1))
+
+            else: # Is a variable from the input
+                lit2 = var
+                if var.is_not():
+                    lit2 = var.arg(0)
+                nums.append(bool_vars_dict[lit2]*(-1 if var.is_not() else 1))
+
+        if len(nums)>0:
+            clauses.append(nums)
 
 # Add dummy clauses for variables that were simplified out
 unused_vars = set(i for i in range(1, len(abstractions)+1))
@@ -248,13 +198,6 @@ for u in unused_vars:
 sat_solver = Glucose3()
 for c in clauses:
     sat_solver.add_clause(c)
-
-# with open("clauses", "w+") as clause_file:
-#     print(f"clauses:\t {clauses}", file=clause_file)
-# with open("abstractions", "w+") as abstraction_file:
-#     print(f"abstractions: {abstractions}", file=abstraction_file)
-# print(len(abstractions))
-# print(len(clauses))
 
 while True:
     # Get a solution of the abstracted SAT problem
@@ -273,7 +216,7 @@ while True:
             if s.solve():
                 # Solution is valid and can be returned
                 print("sat")
-                print(s.get_model())
+                # print(s.get_model())
                 break
             else:
                 # Solution is invalid. Negate the unsatisfiable core and add it as a clause to the SAT solver
