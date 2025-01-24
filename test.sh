@@ -9,17 +9,20 @@ compare_with_solver() {
 }
 
 problems=(
-    "QF_LRA/check/bignum_lra1.smt2"
-    "QF_LRA/check/bignum_lra2.smt2"
-    "QF_LRA/clock_synchro/clocksynchro_2clocks.main_invar.base.smt2"
-    "QF_LRA/sal/gasburner/gasburner-prop3-12.smt2"
-    "QF_LRA/sal/gasburner/gasburner-prop3-5.smt2"
-    "QF_LRA/DTP-Scheduling/constraints-cooking01.smt2"
-    "QF_LRA/DTP-Scheduling/constraints-tms-2-3-light-10.smt2"
-    "QF_LRA/sc/sc-5.induction.cvc.smt2"
-    "QF_LRA/sal/windowreal/windowreal-no_t_deadlock-1.smt2"
-    "QF_LRA/sal/windowreal/windowreal-safe-3.smt2"
-    "QF_LRA/uart/uart-6.induction.cvc.smt2"
+    "inputs/easy_sat.smt2"
+    "inputs/easy_unsat.smt2"
+    "inputs/hard_sat.smt2"
+    "inputs/hard_unsat.smt2"
+    "inputs/bignum_lra1.smt2"
+    "inputs/bignum_lra2.smt2"
+    "inputs/clocksynchro_2clocks.main_invar.base.smt2"
+    "inputs/gasburner-prop3-12.smt2"
+    "inputs/gasburner-prop3-5.smt2"
+    "inputs/constraints-cooking01.smt2"
+    "inputs/constraints-tms-2-3-light-10.smt2"
+    "inputs/sc-5.induction.cvc.smt2"
+    "inputs/windowreal-no_t_deadlock-1.smt2"
+    "inputs/windowreal-safe-3.smt2"
 )
 
 for p in "${problems[@]}"; do
