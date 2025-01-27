@@ -4,7 +4,7 @@ from pysmt.shortcuts import Not, And, Or, TRUE, FALSE, UnsatCoreSolver, Symbol
 from pysmt.environment import get_env
 from pysmt.typing import BOOL
 from pysat.solvers import Glucose3
-from collections import Counter
+import time
 
 aux_prefix="."  # Prefix for auxiliary variables
 # Invalid variable name to avoid conflict with input variables
@@ -86,6 +86,10 @@ def to_cnf(formula, num_aux_vars=0):
         if formula.is_not():
             not_flag=True
             formula=formula.arg(0)
+            if formula.is_true():
+                return FALSE()
+            elif formula.is_false():
+                return TRUE()
 
         # Convert everything to "and", "or" and "not"
         if formula.is_implies():
@@ -109,14 +113,30 @@ def to_cnf(formula, num_aux_vars=0):
             if not_flag:
                 aux_var=Not(aux_var)
             sub_aux_vars = [rec(arg) for arg in formula.args()]
+
             if formula.is_and():
+                filtered_aux=[]
                 for sub_aux in sub_aux_vars:
+                    if sub_aux.is_true():
+                        continue
+                    elif sub_aux.is_false():
+                        return TRUE() if not_flag else FALSE()
+                    filtered_aux.append(sub_aux)
                     clauses.append(Or(Not(aux_var), sub_aux))
-                clauses.append(Or(aux_var, *[Not(sub) for sub in sub_aux_vars]))
+
+                clauses.append(Or(aux_var, *[Not(sub) for sub in filtered_aux]))
+
             else: # formula.is_or():
+                filtered_aux=[]
                 for sub_aux in sub_aux_vars:
+                    if sub_aux.is_false():
+                        continue
+                    elif sub_aux.is_true():
+                        return FALSE() if not_flag else TRUE()
+                    filtered_aux.append(sub_aux)
                     clauses.append(Or(aux_var, Not(sub_aux)))
-                clauses.append(Or(Not(aux_var), *sub_aux_vars))
+
+                clauses.append(Or(Not(aux_var), *filtered_aux))
             return aux_var
 
         raise Exception(f"Unsupported formula type: {formula}")
@@ -136,6 +156,7 @@ file_path = sys.argv[1]
 parser = SmtLibParser()
 script = parser.get_script_fname(file_path)
 formula = script.get_last_formula()
+start_time=time.perf_counter()
 
 # Convert the formula to CNF
 bool_formula, abstractions, abst_indexes, boolean_vars = boolean_abstraction(
@@ -147,10 +168,6 @@ for var in boolean_vars:
     num_aux_vars += 1
     bool_vars_dict[var] = num_aux_vars
 
-# cnf_formula=to_cnf(Or(
-#     And(Symbol("a"),Not(Symbol("b"))),
-#     Not(And(Symbol("c"),Symbol("d"))),
-# ))
 cnf_formula = to_cnf(bool_formula,num_aux_vars)
 if cnf_formula.is_false():
     print("unsat")
@@ -199,40 +216,45 @@ sat_solver = Glucose3()
 for c in clauses:
     sat_solver.add_clause(c)
 
+lra_solver=UnsatCoreSolver(name="z3", logic="QF_LRA")
 while True:
     # Get a solution of the abstracted SAT problem
     if sat_solver.solve():
         model = sat_solver.get_model()
 
-        with UnsatCoreSolver(name="z3", logic="QF_LRA") as s:
-            # Check if solution is valid for the full problem
-            for var in model:
-                if abs(var)-1 < len(abstractions):
-                    if var > 0:
-                        s.add_assertion(abstractions[var-1])
-                    else:
-                        s.add_assertion(Not(abstractions[-var-1]))
+        # Check if solution is valid for the full problem
+        lra_solver.reset_assertions()
+        for var in model:
+            if abs(var)-1 < len(abstractions):
+                if var > 0:
+                    lra_solver.add_assertion(abstractions[var-1])
+                else:
+                    lra_solver.add_assertion(Not(abstractions[-var-1]))
 
-            if s.solve():
-                # Solution is valid and can be returned
-                print("sat")
-                # print(s.get_model())
-                break
-            else:
-                # Solution is invalid. Negate the unsatisfiable core and add it as a clause to the SAT solver
-                unsat_core = s.get_unsat_core()
-                new_clause = []
-                for expr in unsat_core:
-                    if expr in abst_indexes:
-                        new_clause.append(-abst_indexes[expr])
-                    elif Not(expr) in abst_indexes:
-                        new_clause.append(abst_indexes[Not(expr)])
-                    else:
-                        raise ValueError(
-                            "Unexpected clause \""+str(expr)+"\" in Unsat Core")
-                sat_solver.add_clause(new_clause)
-                pass
+        if lra_solver.solve():
+            # Solution is valid and can be returned
+            print("sat")
+            # print(s.get_model())
+            break
+        else:
+            # Solution is invalid. Negate the unsatisfiable core and add it as a clause to the SAT solver
+            unsat_core = lra_solver.get_unsat_core()
+            new_clause = []
+            for expr in unsat_core:
+                if expr in abst_indexes:
+                    new_clause.append(-abst_indexes[expr])
+                elif Not(expr) in abst_indexes:
+                    new_clause.append(abst_indexes[Not(expr)])
+                else:
+                    raise ValueError(
+                        "Unexpected clause \""+str(expr)+"\" in Unsat Core")
+            sat_solver.add_clause(new_clause)
+            pass
     else:
         # Ran out of solutions
         print("unsat")
         break
+
+end_time=time.perf_counter()
+total_seconds = end_time - start_time
+print(str(round(total_seconds*1000))+" ms")
