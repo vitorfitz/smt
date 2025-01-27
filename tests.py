@@ -4,7 +4,7 @@ import csv
 
 dirs=["pj2-tests/sat","pj2-tests/unsat"]
 expected=["sat","unsat"]
-python_files=["py.py","solve.py"]
+python_files=["py.py","z3solve.py"]
 
 columns=['file','our_time_ms','z3_time_ms','correct']
 results_file="results.csv"
